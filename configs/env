@@ -1,0 +1,4 @@
+LIBVIRT_PATH=/var/lib/libvirt/images/coreos
+CHANNEL=beta
+RELEASE=1353.4.0
+IMG_NAME="coreos_${CHANNEL}_${RELEASE}_qemu_image.img"

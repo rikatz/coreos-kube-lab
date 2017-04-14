@@ -1,0 +1,11 @@
+<network>
+  <name>coreos</name>
+  <forward mode='nat'/>
+  <bridge name='brlabcoreos' stp='on' delay='0'/>
+  <ip address='192.168.111.1' netmask='255.255.255.0'>
+    <dhcp>
+      <range start='192.168.111.200' end='192.168.111.254'/>
+    </dhcp>
+  </ip>
+</network>
+
