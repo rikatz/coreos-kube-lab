@@ -1,0 +1,97 @@
+#cloud-config
+ssh_authorized_keys:
+ - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDKrm8HPeIpkGyUF8uipXWC8t5FmCnLjg6FZJVaPBkbjURshX/A5dAf3cbHDaqD82/pbAmAckyXTtPziTJlHvWS6UNQNEVFCuK0f0q87q+6aLZm3Fj62iDUbpBL+C3+uJROtKvfTOi+DdaIVFeoTn7VRsF/bv2xGEQREthHBH5Z4HyZjQXls4UDxu/fUbuZdDg2Zc2JriIlNjnqKqQaLDORfgLYlU5KGKCipH7nDnMr9m9fy71juwpLcLja2q3JicWT4Q9ga7la//PrPRV0vADoMdDvop3f54Ww6knG/KNB+RA2DgUYZBZ1O/NWNBfORWehl2dEOIEvanjYBbMbJ/tF rkatz@barney
+hostname: infra
+coreos:
+  units:
+    - name: "mongo.service"
+      command: "start"
+      content: |
+        [Unit]
+        Description=MongoDB
+        After=docker.service
+        Requires=docker.service
+        [Service]
+        TimeoutStartSec=0
+        Restart=always
+        ExecStartPre=-/usr/bin/docker kill mongo
+        ExecStartPre=-/usr/bin/docker rm mongo
+        ExecStartPre=/usr/bin/docker pull mongo:3
+        ExecStart=/usr/bin/docker run -p 27017:27017 --name mongo mongo:3 --storageEngine wiredTiger
+    - name: "elasticsearch.service"
+      command: "start"
+      content: |
+        [Unit]
+        Description=Elasticsearch
+        After=docker.service
+        Requires=docker.service
+        [Service]
+        TimeoutStartSec=0
+        Restart=always
+        ExecStartPre=-/usr/bin/docker kill elasticsearch
+        ExecStartPre=-/usr/bin/docker rm elasticsearch
+        ExecStartPre=/usr/bin/docker pull elasticsearch:2 
+        ExecStart=/usr/bin/docker run --name elasticsearch -p 9200:9200 -p 9300:9300 elasticsearch:2 elasticsearch -Des.cluster.name="graylog"         
+    - name: "graylog.service"
+      command: "start"
+      content: |
+        [Unit]
+        Description=Graylog Server
+        After=mongo.service
+        After=elasticsearch.service
+        Requires=docker.service
+        [Service]
+        TimeoutStartSec=0
+        Restart=always
+        ExecStartPre=-/usr/bin/docker kill graylog
+        ExecStartPre=-/usr/bin/docker rm graylog
+        ExecStartPre=/usr/bin/docker pull graylog2/server
+        ExecStart=/usr/bin/docker run --name graylog --link mongo:mongo --link elasticsearch:elasticsearch -p 9000:9000 -p 12201:12201 -p 12201:12201/udp -e GRAYLOG_WEB_ENDPOINT_URI="http://192.168.111.5:9000/api" graylog2/server
+    - name: "ca.service"
+      command: "start"
+      content: |
+        [Unit]
+        Description=Simple CA
+        After=docker.service
+        Requires=docker.service
+        [Service]
+        ExecStartPre=-/usr/bin/docker stop simple-ca
+        ExecStartPre=-/usr/bin/docker rm simple-ca
+        ExecStartPre=/usr/bin/mkdir -p /var/lib/simple-ca/ssl
+        ExecStartPre=/bin/bash -c 'chown $(docker run --rm quay.io/jcmoraisjr/simple-ca id -u lighttpd) /var/lib/simple-ca/ssl'
+        ExecStart=/usr/bin/docker run \
+          --name simple-ca \
+          -p 80:8080 \
+          -p 443:8443 \
+          -e CERT_TLS_DNS=ca.springfield.net \
+          -e CA_CN="Springfield Certification Authority"" \
+          -e CERT_TLS_IP=192.168.111.5 \
+          -v /var/lib/simple-ca/ssl:/ssl \
+          quay.io/jcmoraisjr/simple-ca:latest
+        RestartSec=10s
+        Restart=always
+        [Install]
+        WantedBy=multi-user.target
+    - name: "initcerts.service"
+      command: "start"
+      content: |
+        [Unit]
+        Description=Init Certs
+        After=ca.service
+        Requires=ca.service
+        [Service]
+        Type=oneshot
+        ExecStart=/opt/initcerts.sh
+        [Install]
+        WantedBy=multi-user.target        
+write_files:
+  - path: "/opt/initcerts.sh"
+    permissions: "0755"
+    owner: "root"
+    content: |
+      #!/bin/bash
+      mkdir -p /etc/certs
+      cd /etc/certs
+      openssl req -new -newkey rsa:2048 -keyout host-key.pem -nodes -out host.csr -subj "/"
+      curl -fk -o ca.pem "https://192.168.111.5/ca"
+      curl -fk --data-binary @host.csr -o host.pem "https://192.168.111.5/sign?cn=infra&ns=infra.springfield.net,etcd.springfield.net&ip=192.168.111.5"
