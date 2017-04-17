@@ -1,0 +1,193 @@
+#cloud-config
+ssh_authorized_keys:
+ - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDKrm8HPeIpkGyUF8uipXWC8t5FmCnLjg6FZJVaPBkbjURshX/A5dAf3cbHDaqD82/pbAmAckyXTtPziTJlHvWS6UNQNEVFCuK0f0q87q+6aLZm3Fj62iDUbpBL+C3+uJROtKvfTOi+DdaIVFeoTn7VRsF/bv2xGEQREthHBH5Z4HyZjQXls4UDxu/fUbuZdDg2Zc2JriIlNjnqKqQaLDORfgLYlU5KGKCipH7nDnMr9m9fy71juwpLcLja2q3JicWT4Q9ga7la//PrPRV0vADoMdDvop3f54Ww6knG/KNB+RA2DgUYZBZ1O/NWNBfORWehl2dEOIEvanjYBbMbJ/tF rkatz@barney
+hostname: node1
+coreos:
+  units:
+    - name: "docker.service"
+      drop-ins:
+        - name: "50-insecure-registry.conf"
+          content: |
+           [Service]
+           Environment=DOCKER_OPTS='--insecure-registry="gateway:5000"'  
+    - name: "initcerts.service"
+      command: "start"
+      content: |
+        [Unit]
+        Description=Init Certs
+        After=docker.service
+        Requires=docker.service
+        [Service]
+        Type=oneshot
+        ExecStart=/opt/initcerts.sh
+        TimeoutStartSec=0
+        [Install]
+        WantedBy=multi-user.target
+    - name: "calico-node.service"
+      command: "start"
+      content: |
+        [Unit]
+        Description=Calico Node
+        After=docker.service
+        Requires=docker.service
+        [Service]
+        TimeoutStartSec=0
+        Restart=always
+        User=root
+        Environment=ETCD_ENDPOINTS=https://master:2379
+        ExecStartPre=-/usr/bin/docker kill calico-node
+        ExecStartPre=-/usr/bin/docker rm calico-node
+        ExecStartPre=/usr/bin/docker pull gateway:5000/calico/node:v1.1.1
+        ExecStart=/usr/bin/docker run --net=host --privileged --name=calico-node -e ETCD_ENDPOINTS=${ETCD_ENDPOINTS} \
+        -e NODENAME=${HOSTNAME} \
+        -e IP= \
+        -e ETCD_KEY_FILE=/etc/certs/host-key.pem -e ETCD_CERT_FILE=/etc/certs/host.pem -e ETCD_CA_CERT_FILE=/etc/certs/ca.pem \
+        -e NO_DEFAULT_POOLS= \
+        -e AS= \
+        -e CALICO_LIBNETWORK_ENABLED=true \
+        -e IP6= \
+        -e CALICO_NETWORKING_BACKEND=bird \
+        -e FELIX_DEFAULTENDPOINTTOHOSTACTION=ACCEPT \
+        -v /var/run/calico:/var/run/calico \
+        -v /lib/modules:/lib/modules \
+        -v /etc/certs:/etc/certs \
+        -v /run/docker/plugins:/run/docker/plugins \
+        -v /var/run/docker.sock:/var/run/docker.sock \
+        -v /var/log/calico:/var/log/calico \
+        gateway:5000/calico/node:v1.1.1
+        [Install]
+        WantedBy=multi-user.target
+    - name: "kubelet.service"
+      command: "start"
+      content: |
+        [Unit]
+        Description=Kubelet
+        After=calico-cni.service
+        Requires=calico-cni.service
+        [Service]
+        Environment=KUBELET_IMAGE_TAG=v1.6.1_coreos.0
+        Environment=KUBELET_IMAGE_URL=docker://gateway:5000/library/hyperkube
+        Environment="RKT_RUN_ARGS=--insecure-options=image,http --uuid-file-save=/var/run/kubelet-pod.uuid \
+          --volume certs,kind=host,source=/etc/kubernetes/ssl,readOnly=true \
+          --mount volume=certs,target=/etc/kubernetes/ssl \
+          --volume kubeconfig,kind=host,source=/etc/kubernetes/node-kubeconfig.yaml,readOnly=true \
+          --mount volume=kubeconfig,target=/etc/kubernetes/node-kubeconfig.yaml \
+          --volume dns,kind=host,source=/etc/resolv.conf \
+          --mount volume=dns,target=/etc/resolv.conf \
+          --volume var-log,kind=host,source=/var/log \
+          --mount volume=var-log,target=/var/log"
+        ExecStartPre=/usr/bin/mkdir -p /etc/kubernetes/manifests
+        ExecStartPre=/usr/bin/mkdir -p /var/log/containers
+        ExecStartPre=/usr/bin/ln /etc/certs /etc/kubernetes/ssl
+        ExecStartPre=-/usr/bin/rkt rm --uuid-file=/var/run/kubelet-pod.uuid
+        ExecStart=/usr/lib/coreos/kubelet-wrapper \
+          --cni-conf-dir=/etc/kubernetes/cni/net.d \
+          --network-plugin=cni \
+          --container-runtime=docker \
+          --register-node=true \
+          --allow-privileged=false \
+          --pod-manifest-path=/etc/kubernetes/manifests \
+          --hostname-override=192.168.111.11 \
+          --cluster_dns=10.255.0.10 \
+          --cluster_domain=cluster.local \
+          --pod-infra-container-image=gateway:5000/library/pause:3.0
+          --kubeconfig=/etc/kubernetes/node-kubeconfig.yaml \
+          --tls-cert-file=/etc/kubernetes/ssl/host.pem \
+          --tls-private-key-file=/etc/kubernetes/ssl/host-key.pem
+        ExecStop=-/usr/bin/rkt stop --uuid-file=/var/run/kubelet-pod.uuid
+        Restart=always
+        RestartSec=10
+        [Install]
+        WantedBy=multi-user.target
+    - name: "kube-proxy.service"
+      command: "start"
+      content: |
+        [Unit]
+        Description=Kubernetes Proxy
+        After=docker.service
+        Requires=docker.service
+        [Service]
+        TimeoutStartSec=0
+        Restart=always
+        User=root
+        ExecStartPre=-/usr/bin/docker kill kube-proxy
+        ExecStartPre=-/usr/bin/docker rm kube-proxy
+        ExecStartPre=/usr/bin/docker pull gateway:5000/library/hyperkube:v1.6.1_coreos.0
+        ExecStart=/usr/bin/docker run --net=host --privileged --name kube-proxy -v /etc/certs:/etc/kubernetes/ssl:ro gateway:5000/library/hyperkube:v1.6.1_coreos.0 /hyperkube \
+        proxy  --proxy-mode=iptables --kubeconfig=/etc/kubernetes/node-kubeconfig.yaml
+        [Install]
+        WantedBy=multi-user.target
+    - name: "calico-cni.service"
+      command: "start"
+      content: |
+        [Unit]
+        Description=Calico CNI
+        After=docker.service
+        Requires=docker.service
+        [Service]
+        TimeoutStartSec=0
+        Restart=always
+        User=root
+        ExecStartPre=-/usr/bin/docker kill calico-cni
+        ExecStartPre=-/usr/bin/docker rm calico-cni
+        ExecStartPre=/usr/bin/docker pull gateway:5000/library/hyperkube:v1.6.1_coreos.0
+        ExecStart=/usr/bin/docker run --net=host --privileged --name kube-proxy -v /etc/certs:/etc/kubernetes/ssl:ro gateway:5000/library/hyperkube:v1.6.1_coreos.0 /hyperkube \
+        proxy  --proxy-mode=iptables --kubeconfig=/etc/kubernetes/node-kubeconfig.yaml
+        [Install]
+        WantedBy=multi-user.target
+write_files:
+  - path: "/opt/initcerts.sh"
+    permissions: "0755"
+    owner: "root"
+    content: |
+      #!/bin/bash
+      mkdir -p /etc/certs
+      cd /etc/certs
+      openssl req -new -newkey rsa:2048 -keyout host-key.pem -nodes -out host.csr -subj "/"
+      curl -fk --retry-connrefused --retry-delay 30 --retry-max-time 600 --retry 20 -o ca.pem "https://infra/ca"
+      curl -fk --retry-connrefused --retry-delay 30 --retry-max-time 600 --retry 20  --data-binary @host.csr -o host.pem "https://infra/sign?cn=master&ns=master.springfield.net,etcd.springfield.net,master,etcd&ip=192.168.111.10,10.255.0.1"
+  - path: "/etc/kubernetes/node-kubeconfig.yaml"
+    permissions: "0755"
+    owner: "root"
+    content: |
+      apiVersion: v1
+      kind: Config
+      clusters:
+      - name: local
+        cluster: 
+          certificate-authority: /etc/kubernetes/ssl/ca.pem
+          server: https://master
+      users: 
+      - name: kubelet
+        user: 
+          client-certificate: /etc/kubernetes/ssl/host.pem
+          client-key: /etc/kubernetes/ssl/host-key.pem
+      context: 
+      - context:
+          cluster: local
+          user: kubelet
+        name: kubelet-context
+      current-context: kubelet-context  
+  - path: "/etc/kubernetes/cni/net.d/10-calico.conf"
+    permissions: "0755"
+    owner: "root"
+    content: |
+     {
+       "name": "calico-k8s-network",
+       "type": "calico",
+       "etcd_endpoints": "https://master:2379",
+       "etcd_key_file": "/etc/certs/host-key.pem",
+       "etcd_cert_file": "/etc/certs/host.pem",
+       "etcd_ca_cert_file": "/etc/certs/ca.pem",
+       "etcd_scheme": "https",
+       "log_level": "info",
+       "ipam": {
+          "type": "calico-ipam"
+       },
+       "policy": {
+          "type": "k8s"
+       },
+       "kubernetes": {
+          "kubeconfig": "/etc/kubernetes/kube-config.yaml"
+       }
+     }

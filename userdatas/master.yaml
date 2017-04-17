@@ -2,3 +2,134 @@
 ssh_authorized_keys:
  - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDKrm8HPeIpkGyUF8uipXWC8t5FmCnLjg6FZJVaPBkbjURshX/A5dAf3cbHDaqD82/pbAmAckyXTtPziTJlHvWS6UNQNEVFCuK0f0q87q+6aLZm3Fj62iDUbpBL+C3+uJROtKvfTOi+DdaIVFeoTn7VRsF/bv2xGEQREthHBH5Z4HyZjQXls4UDxu/fUbuZdDg2Zc2JriIlNjnqKqQaLDORfgLYlU5KGKCipH7nDnMr9m9fy71juwpLcLja2q3JicWT4Q9ga7la//PrPRV0vADoMdDvop3f54Ww6knG/KNB+RA2DgUYZBZ1O/NWNBfORWehl2dEOIEvanjYBbMbJ/tF rkatz@barney
 hostname: master
+coreos:
+  units:
+    - name: "docker.service"
+      drop-ins:
+        - name: "50-insecure-registry.conf"
+          content: |
+           [Service]
+           Environment=DOCKER_OPTS='--insecure-registry="gateway:5000"'
+    - name: "etcd.service"
+      command: "start"
+      content: |
+        [Unit]
+        Description=Etcd
+        After=initcerts.service
+        Requires=initcerts.service
+        [Service]
+        TimeoutStartSec=0
+        Restart=always
+        ExecStartPre=-/usr/bin/docker kill etcd
+        ExecStartPre=-/usr/bin/docker rm etcd
+        ExecStartPre=/usr/bin/docker pull gateway:5000/coreos/etcd:v3.1.5
+        ExecStart=/usr/bin/docker run -p 2379:2379 --name etcd -v /var/etcd:/var/etcd -v /etc/certs:/etc/certs:ro gateway:5000/coreos/etcd:v3.1.5 etcd \
+        -name etcd0 --data-dir /var/etcd \
+        -initial-advertise-peer-urls http://master:2380 \
+        -listen-peer-urls http://0.0.0.0:2380 \
+        -initial-cluster-token etcd-cluster-1 \
+        -initial-cluster etcd0=http://master:2380 \
+        -initial-cluster-state new \
+        -listen-client-urls https://0.0.0.0:2379,http://0.0.0.0:4001 \
+        -advertise-client-urls https://master:2379,http://master:4001  \
+        --client-cert-auth --trusted-ca-file=/etc/certs/ca.pem  \
+        --cert-file=/etc/certs/host.pem --key-file=/etc/certs/host-key.pem
+        [Install]
+        WantedBy=multi-user.target
+    - name: "kube-apiserver.service"
+      command: "start"
+      content: |
+        [Unit]
+        Description=Kubernetes API Server
+        After=initcerts.service
+        [Service]
+        TimeoutStartSec=0
+        Restart=always
+        ExecStartPre=-/usr/bin/docker kill kube-apiserver
+        ExecStartPre=-/usr/bin/docker rm kube-apiserver
+        ExecStartPre=/usr/bin/docker pull gateway:5000/library/hyperkube:v1.6.1_coreos.0
+        ExecStart=/usr/bin/docker run --net=host --name kube-apiserver -v /etc/certs:/etc/certs:ro gateway:5000/library/hyperkube:v1.6.1_coreos.0 /hyperkube \
+        apiserver --bind-address=0.0.0.0 --etcd-servers=https://master:2379 --etcd-certfile=/etc/certs/host.pem --etcd-keyfile=/etc/certs/host-key.pem \
+        --etcd-cafile=/etc/certs/ca.pem --allow-privileged=false \
+        --service-cluster-ip-range=10.255.0.0/16 --secure-port=443 --advertise-address=192.168.111.10 \
+        --admission-control=NamespaceLifecycle,LimitRanger,ServiceAccount,DefaultStorageClass,ResourceQuota \
+        --tls-cert-file=/etc/certs/host.pem --tls-private-key-file=/etc/certs/host-key.pem \
+        --client-ca-file=/etc/certs/ca.pem --service-account-key-file=/etc/certs/host-key.pem \
+        --runtime-config=extensions/v1beta1/networkpolicies=true --anonymous-auth=false
+        [Install]
+        WantedBy=multi-user.target
+    - name: "kube-controller.service"
+      command: "start"
+      content: |
+        [Unit]
+        Description=Kubernetes Controller Manager
+        After=kube-apiserver.service
+        [Service]
+        TimeoutStartSec=0
+        Restart=always
+        ExecStartPre=-/usr/bin/docker kill kube-controller
+        ExecStartPre=-/usr/bin/docker rm kube-controller
+        ExecStartPre=/usr/bin/docker pull gateway:5000/library/hyperkube:v1.6.1_coreos.0
+        ExecStart=/usr/bin/docker run --net=host --name kube-controller -v /etc/certs:/etc/certs:ro gateway:5000/library/hyperkube:v1.6.1_coreos.0 /hyperkube \
+        controller-manager --master=http://127.0.0.1:8080 --leader-elect=true \
+        --service-account-private-key-file=/etc/certs/host-key.pem --root-ca-file=/etc/certs/ca.pem
+        [Install]
+        WantedBy=multi-user.target
+    - name: "kube-scheduler.service"
+      command: "start"
+      content: |
+        [Unit]
+        Description=Kubernetes Scheduler
+        After=kube-apiserver.service
+        [Service]
+        TimeoutStartSec=0
+        Restart=always
+        ExecStartPre=-/usr/bin/docker kill kube-scheduler
+        ExecStartPre=-/usr/bin/docker rm kube-scheduler
+        ExecStartPre=/usr/bin/docker pull gateway:5000/library/hyperkube:v1.6.1_coreos.0
+        ExecStart=/usr/bin/docker run --net=host --name kube-scheduler -v /etc/certs:/etc/certs:ro gateway:5000/library/hyperkube:v1.6.1_coreos.0 /hyperkube \
+        scheduler --master=http://127.0.0.1:8080 --leader-elect=true
+        [Install]
+        WantedBy=multi-user.target
+    - name: "policy-controller.service"
+      command: "start"
+      content: |
+        [Unit]
+        Description=Calico Policy Controller
+        After=kube-apiserver.service
+        [Service]
+        TimeoutStartSec=0
+        Restart=always
+        ExecStartPre=-/usr/bin/docker kill policy-controller
+        ExecStartPre=-/usr/bin/docker rm policy-controller
+        ExecStartPre=/usr/bin/docker pull gateway:5000/calico/kube-policy-controller:v0.5.4
+        ExecStart=/usr/bin/docker run  --name policy-controller --net=host -v /etc/certs:/etc/certs:ro \
+        -e ETCD_ENDPOINTS=https://master:2379 -e ETCD_CA_CERT_FILE=/etc/certs/ca.pem -e ETCD_CERT_FILE=/etc/certs/host.pem \
+        -e ETCD_KEY_FILE=/etc/certs/host-key.pem -e K8S_API=http://127.0.0.1:8080 \
+        gateway:5000/calico/kube-policy-controller:v0.5.4
+        [Install]
+        WantedBy=multi-user.target
+    - name: "initcerts.service"
+      command: "start"
+      content: |
+        [Unit]
+        Description=Init Certs
+        After=docker.service
+        Requires=docker.service
+        [Service]
+        Type=oneshot
+        ExecStart=/opt/initcerts.sh
+        TimeoutStartSec=0
+        [Install]
+        WantedBy=multi-user.target
+write_files:
+  - path: "/opt/initcerts.sh"
+    permissions: "0755"
+    owner: "root"
+    content: |
+      #!/bin/bash
+      mkdir -p /etc/certs
+      cd /etc/certs
+      openssl req -new -newkey rsa:2048 -keyout host-key.pem -nodes -out host.csr -subj "/"
+      curl -fk --retry-connrefused --retry-delay 30 --retry-max-time 600 --retry 20 -o ca.pem "https://infra/ca"
+      curl -fk --retry-connrefused --retry-delay 30 --retry-max-time 600 --retry 20  --data-binary @host.csr -o host.pem "https://infra/sign?cn=master&ns=master.springfield.net,etcd.springfield.net,master,etcd&ip=192.168.111.10,10.255.0.1"
