@@ -1,0 +1,10 @@
+mongo:3|library/mongo:3
+elasticsearch:2|library/elasticsearch:2
+graylog2/server|graylog2/server:latest
+quay.io/jcmoraisjr/simple-ca:latest|library/simple-ca:latest
+quay.io/coreos/hyperkube:v1.6.1_coreos.0|library/hyperkube:v1.6.1_coreos.0
+quay.io/calico/kube-policy-controller:v0.5.4|calico/kube-policy-controller:v0.5.4
+quay.io/calico/node:v1.1.1|calico/node:v1.1.1
+quay.io/calico/cni:v1.6.2|calico/cni:v1.6.2
+gcr.io/google_containers/pause:3.0|library/pause:3.0
+quay.io/coreos/etcd:v3.1.5|coreos/etcd:v3.1.5
