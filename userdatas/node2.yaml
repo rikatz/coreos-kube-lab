@@ -1,7 +1,7 @@
 #cloud-config
 ssh_authorized_keys:
  - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDKrm8HPeIpkGyUF8uipXWC8t5FmCnLjg6FZJVaPBkbjURshX/A5dAf3cbHDaqD82/pbAmAckyXTtPziTJlHvWS6UNQNEVFCuK0f0q87q+6aLZm3Fj62iDUbpBL+C3+uJROtKvfTOi+DdaIVFeoTn7VRsF/bv2xGEQREthHBH5Z4HyZjQXls4UDxu/fUbuZdDg2Zc2JriIlNjnqKqQaLDORfgLYlU5KGKCipH7nDnMr9m9fy71juwpLcLja2q3JicWT4Q9ga7la//PrPRV0vADoMdDvop3f54Ww6knG/KNB+RA2DgUYZBZ1O/NWNBfORWehl2dEOIEvanjYBbMbJ/tF rkatz@barney
-hostname: node1
+hostname: node2
 coreos:
   units:
     - name: "docker.service"
@@ -85,7 +85,7 @@ coreos:
           --register-node=true \
           --allow-privileged=false \
           --pod-manifest-path=/etc/kubernetes/manifests \
-          --hostname-override=192.168.111.11 \
+          --hostname-override=192.168.111.12 \
           --cluster_dns=10.255.0.10 \
           --cluster_domain=cluster.local \
           --pod-infra-container-image=gateway:5000/library/pause:3.0 \
@@ -112,7 +112,7 @@ coreos:
         ExecStartPre=-/usr/bin/docker rm kube-proxy
         ExecStartPre=/usr/bin/docker pull gateway:5000/library/hyperkube:v1.6.1_coreos.0
         ExecStart=/usr/bin/docker run --net=host --privileged --name kube-proxy -v /etc/kubernetes:/etc/kubernetes:ro gateway:5000/library/hyperkube:v1.6.1_coreos.0 /hyperkube \
-        proxy  --proxy-mode=iptables --hostname-override=192.168.111.11 --kubeconfig=/etc/kubernetes/node-kubeconfig.yaml
+        proxy  --proxy-mode=iptables --hostname-override=192.168.111.12 --kubeconfig=/etc/kubernetes/node-kubeconfig.yaml
         [Install]
         WantedBy=multi-user.target
     - name: "calico-cni.service"
@@ -143,7 +143,7 @@ write_files:
       cd /etc/kubernetes/ssl
       openssl req -new -newkey rsa:2048 -keyout host-key.pem -nodes -out host.csr -subj "/"
       curl -fk --retry-connrefused --retry-delay 30 --retry-max-time 600 --retry 20 -o ca.pem "https://infra/ca"
-      curl -fk --retry-connrefused --retry-delay 30 --retry-max-time 600 --retry 20  --data-binary @host.csr -o host.pem "https://infra/sign?cn=node1&ns=node1.springfield.net,node1&ip=192.168.111.11"
+      curl -fk --retry-connrefused --retry-delay 30 --retry-max-time 600 --retry 20  --data-binary @host.csr -o host.pem "https://infra/sign?cn=node2&ns=node2.springfield.net,node2&ip=192.168.111.12"
   - path: "/etc/kubernetes/node-kubeconfig.yaml"
     permissions: "0755"
     owner: "root"
